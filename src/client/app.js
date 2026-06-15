@@ -1513,8 +1513,8 @@
 
       $btnApprove.disabled = !approveAction;
       $btnReject.disabled = !rejectAction;
-      if (approveAction) $btnApprove.textContent = approveAction.label || 'Accept';
-      if (rejectAction) $btnReject.textContent = rejectAction.label || 'Reject';
+      $btnApprove.textContent = approveAction?.type === 'approve_all' ? 'Accept all' : 'Accept';
+      $btnReject.textContent = 'Reject';
 
       fireNotification(approval.description || 'Agent needs approval', 'cursor-approval');
     } else {
