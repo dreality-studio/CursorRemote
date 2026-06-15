@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { execSync } from 'child_process';
+import { open, type ZipFile } from 'yauzl';
 
 const DEV_ROOT = resolve(process.cwd());
 const PKG_PATH = resolve(DEV_ROOT, 'package.json');
@@ -27,7 +27,63 @@ const FORBIDDEN_PATTERNS = [
   '.cursor/',
 ];
 
-function main(): void {
+function openZip(vsixPath: string): Promise<ZipFile> {
+  return new Promise((resolveZip, reject) => {
+    open(vsixPath, { lazyEntries: true }, (err, zipfile) => {
+      if (err || !zipfile) reject(err ?? new Error(`Could not open ${vsixPath}`));
+      else resolveZip(zipfile);
+    });
+  });
+}
+
+function listZipEntries(vsixPath: string): Promise<string[]> {
+  return new Promise((resolveList, reject) => {
+    open(vsixPath, { lazyEntries: true }, (err, zipfile) => {
+      if (err || !zipfile) {
+        reject(err ?? new Error(`Could not open ${vsixPath}`));
+        return;
+      }
+
+      const entries: string[] = [];
+      zipfile.on('entry', (entry) => {
+        entries.push(entry.fileName);
+        zipfile.readEntry();
+      });
+      zipfile.on('end', () => resolveList(entries));
+      zipfile.on('error', reject);
+      zipfile.readEntry();
+    });
+  });
+}
+
+async function readZipText(vsixPath: string, fileName: string): Promise<string> {
+  const zipfile = await openZip(vsixPath);
+  return new Promise((resolveText, reject) => {
+    zipfile.on('entry', (entry) => {
+      if (entry.fileName !== fileName) {
+        zipfile.readEntry();
+        return;
+      }
+
+      zipfile.openReadStream(entry, (err, stream) => {
+        if (err || !stream) {
+          reject(err ?? new Error(`Could not read ${fileName}`));
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        stream.on('data', (chunk) => chunks.push(chunk));
+        stream.on('end', () => resolveText(Buffer.concat(chunks).toString('utf-8')));
+        stream.on('error', reject);
+      });
+    });
+    zipfile.on('end', () => reject(new Error(`Entry not found: ${fileName}`)));
+    zipfile.on('error', reject);
+    zipfile.readEntry();
+  });
+}
+
+async function main(): Promise<void> {
   const vsixArg = process.argv[2];
   let vsixPath: string;
 
@@ -40,20 +96,14 @@ function main(): void {
 
   console.log(`Verifying ${vsixPath}\n`);
 
-  let listing: string;
+  let files: string[];
   try {
-    listing = execSync(`python3 -c "
-import zipfile, sys
-with zipfile.ZipFile(sys.argv[1]) as z:
-    for n in z.namelist():
-        print(n)
-" ${JSON.stringify(vsixPath)}`, { encoding: 'utf-8' });
+    files = await listZipEntries(vsixPath);
   } catch {
     console.error(`✗ Could not read ${vsixPath}. Was it built?`);
     process.exit(1);
   }
 
-  const files = listing.trim().split('\n');
   let errors = 0;
 
   console.log('— Required files —');
@@ -88,18 +138,18 @@ with zipfile.ZipFile(sys.argv[1]) as z:
   }
 
   const pkg = JSON.parse(readFileSync(PKG_PATH, 'utf-8'));
-  const innerPkgFile = files.find(f => f === 'extension/package.json');
-  if (innerPkgFile) {
-    const innerPkg = execSync(`python3 -c "
-import zipfile, sys, json
-with zipfile.ZipFile(sys.argv[1]) as z:
-    data = json.loads(z.read('extension/package.json'))
-    print(data.get('version', ''))
-" ${JSON.stringify(vsixPath)}`, { encoding: 'utf-8' }).trim();
-    if (innerPkg === pkg.version) {
-      console.log(`\n✓ Version match: ${pkg.version}`);
-    } else {
-      console.error(`\n✗ Version mismatch: VSIX has ${innerPkg}, repo has ${pkg.version}`);
+  if (files.includes('extension/package.json')) {
+    try {
+      const innerPkgRaw = await readZipText(vsixPath, 'extension/package.json');
+      const innerPkg = JSON.parse(innerPkgRaw).version ?? '';
+      if (innerPkg === pkg.version) {
+        console.log(`\n✓ Version match: ${pkg.version}`);
+      } else {
+        console.error(`\n✗ Version mismatch: VSIX has ${innerPkg}, repo has ${pkg.version}`);
+        errors++;
+      }
+    } catch (err) {
+      console.error(`\n✗ Could not read extension/package.json from VSIX: ${err instanceof Error ? err.message : err}`);
       errors++;
     }
   }
@@ -115,4 +165,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
   console.log('\n✓ VSIX verification passed.');
 }
 
-main();
+main().catch((err) => {
+  console.error(`✗ Verification failed: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+});

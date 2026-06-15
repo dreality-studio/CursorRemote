@@ -203,17 +203,18 @@
     ]
   },
   "scripts": {
-    "dev": "mkdir -p temp data && tsx scripts/dev-wrapper.ts",
-    "build": "tsc && rm -rf dist/client && cp -r src/client dist/client && cp node_modules/socket.io/client-dist/socket.io.min.js dist/client/vendor-socket.io.min.js && cp node_modules/socket.io/client-dist/socket.io.min.js.map dist/client/vendor-socket.io.min.js.map",
+    "dev": "tsx scripts/ensure-dirs.ts temp data && tsx scripts/dev-wrapper.ts",
+    "build": "tsc && tsx scripts/copy-client-assets.ts",
     "build:ext": "node extension/esbuild.js --production",
     "watch:ext": "node extension/esbuild.js --watch",
-    "package": "tsx scripts/bump-build.ts && mkdir -p releases && npx @vscode/vsce package --no-dependencies --out releases/ && tsx scripts/verify-vsix.ts",
+    "package": "tsx scripts/ensure-dirs.ts releases && npx @vscode/vsce package --no-dependencies --out releases/ && tsx scripts/verify-vsix.ts",
+    "package:bump": "tsx scripts/bump-build.ts && npm run package",
     "vscode:prepublish": "npm run build && npm run build:ext",
     "release": "tsx scripts/release.ts",
     "publish:public": "tsx scripts/publish.ts",
-    "start": "mkdir -p temp data && node dist/server/index.js",
+    "start": "tsx scripts/ensure-dirs.ts temp data && node dist/server/index.js",
     "discover": "tsx src/discovery/discover-dom.ts",
-    "record": "mkdir -p data && tsx scripts/record-cdp.ts",
+    "record": "tsx scripts/ensure-dirs.ts data && tsx scripts/record-cdp.ts",
     "replay": "tsx scripts/replay-cdp.ts",
     "test": "npx tsx --test tests/*.test.ts",
     "probe": "tsx scripts/probe-cdp.ts",
@@ -238,6 +239,7 @@
     "esbuild": "^0.24.0",
     "jsdom": "^29.0.1",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "yauzl": "^3.4.0"
   }
 }
